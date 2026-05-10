@@ -71,7 +71,7 @@ export class Claude extends Agent {
     const out = ["--print", "--model", model, "--allowed-tools", this.tools];
     if (this.mode) out.push("--permission-mode", this.mode);
     if (this.schema) {
-      out.push("--output-format", "json", "--json-schema", this.schema);
+      out.push("--json-schema", this.schema);
     }
     return out;
   }
