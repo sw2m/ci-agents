@@ -116,6 +116,7 @@ runs:
             const opts = { timeout };
             if (cfg.model) opts.primary = cfg.model;
             if (cfg.fallback) opts.fallback = cfg.fallback;
+            if (cfg.readonly || cat.readonly) opts.readonly = true;
             if (cfg.extra) opts.extra = Array.isArray(cfg.extra) ? cfg.extra : cfg.extra.split(/\s+/).filter(Boolean);
             const agent = cfg.agent === "claude" ? new Claude(opts) : new Gemini(opts);
             const agentValidatorFn = cfg.validator ? (await import(cfg.validator)).default : catValidatorFn;

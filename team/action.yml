@@ -48,6 +48,10 @@ inputs:
     description: "Current review round (1-based). Used to compute budget if this is the highest layer."
     required: false
     default: "1"
+  readonly:
+    description: "Restrict all agents to read-only filesystem access."
+    required: false
+    default: "false"
   evaluator:
     description: Path to alignment evaluator script (.ts). Receives parsed outputs array, returns alignment report.
     required: true
