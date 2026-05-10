@@ -111,15 +111,12 @@ export class Agent {
           new Response(proc.stderr).bytes(),
         ]);
         if (this.debug) {
-          console.log("::group::" + this.cmd + " (" + model + ") stdout");
+          console.log("::group::" + this.cmd + " (" + model + ") stdout (" + output.length + " bytes)");
           console.log(new TextDecoder().decode(output));
           console.log("::endgroup::");
-          const stderrText = new TextDecoder().decode(err).trim();
-          if (stderrText) {
-            console.log("::group::" + this.cmd + " (" + model + ") stderr");
-            console.log(stderrText);
-            console.log("::endgroup::");
-          }
+          console.log("::group::" + this.cmd + " (" + model + ") stderr (" + err.length + " bytes)");
+          console.log(new TextDecoder().decode(err));
+          console.log("::endgroup::");
         }
         const status = await proc.status;
         const rc = status.signal === "SIGTERM" ? this.codes.timeout : (status.code ?? 1);
