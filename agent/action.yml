@@ -112,6 +112,8 @@ runs:
         const opts = { timeout };
         if (inputs.get("model")) opts.primary = inputs.get("model");
         if (inputs.get("fallback-model")) opts.fallback = inputs.get("fallback-model");
+        const readonly = inputs.get("readonly") === "true";
+        if (readonly) opts.readonly = true;
         const extraArgs = inputs.get("extra-args");
         if (extraArgs) opts.extra = extraArgs.split(/\s+/).filter(Boolean);
         const agent = agentType === "claude" ? new Claude(opts) : new Gemini(opts);

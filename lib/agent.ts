@@ -19,6 +19,8 @@ export type AgentOpts = {
   timeout: number;
   /** Additional CLI args appended after subclass args. */
   extra?: string[];
+  /** Restrict to read-only filesystem access. */
+  readonly?: boolean;
 };
 
 /** Exit-code semantics. Open record so subclasses can register any

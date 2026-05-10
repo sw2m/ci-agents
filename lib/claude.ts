@@ -20,6 +20,7 @@ export type Opts =
     /** Space-separated list of tools claude is permitted to invoke (e.g.
      *  `"Bash Edit Write Read Glob Grep"`). Empty string = inference-only. */
     tools?: string;
+    readonly?: boolean;
     /** Permission mode flag passed to claude (e.g. `bypassPermissions`).
      *  Empty = omit the flag, claude uses its default. */
     mode?: string;
@@ -46,7 +47,7 @@ export class Claude extends Agent {
       fallback: opts.fallback ?? "claude-sonnet-4-5",
       timeout: opts.timeout ?? 900,
     });
-    this.tools = opts.tools ?? "Bash Edit Write Read Glob Grep";
+    this.tools = opts.readonly ? "Read Glob Grep" : (opts.tools ?? "Bash Edit Write Read Glob Grep");
     this.mode = opts.mode ?? "bypassPermissions";
   }
 
