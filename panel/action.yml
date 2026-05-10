@@ -84,15 +84,20 @@ runs:
             cat = serde.composite(cat, catOverlay);
           }
 
-          // Build prompt: read input from catNs, render template
-          const inputRaw = await shared.get(catNs, "input");
-          const inputData = inputRaw ? serde.parse(inputRaw) : {};
+          // Build prompt
+          const promptSrc = await shared.get(catNs, "prompt") || cat.prompt || "";
+          let tpl = promptSrc;
+          if (/\.(mustache|md|txt)$/.test(promptSrc)) {
+            tpl = await Deno.readTextFile(promptSrc);
+          }
+          const hasVars = Mustache.parse(tpl).some((t) => t[0] !== "text");
           let prompt;
-          if (cat.prompt && /\.(mustache|md|txt)$/.test(cat.prompt)) {
-            const tpl = await Deno.readTextFile(cat.prompt);
+          if (hasVars) {
+            const inputRaw = await shared.get(catNs, "input");
+            const inputData = inputRaw ? serde.parse(inputRaw) : {};
             prompt = Mustache.render(tpl, inputData);
           } else {
-            prompt = cat.prompt || "";
+            prompt = tpl;
           }
 
           // Load schema
