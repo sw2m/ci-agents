@@ -123,6 +123,7 @@ runs:
             if (cfg.fallback) opts.fallback = cfg.fallback;
             if (cfg.readonly || cat.readonly) opts.readonly = true;
             if (cfg.extra) opts.extra = Array.isArray(cfg.extra) ? cfg.extra : cfg.extra.split(/\s+/).filter(Boolean);
+            if (schema && cfg.agent === "claude") opts.schema = JSON.stringify(schema);
             const agent = cfg.agent === "claude" ? new Claude(opts) : new Gemini(opts);
             const agentValidatorFn = cfg.validator ? (await import(cfg.validator)).default : catValidatorFn;
             const agentOnRetryFn = cfg.onRetry ? (await import(cfg.onRetry)).default : catOnRetryFn;
@@ -145,8 +146,17 @@ runs:
 
               const fmt = cat.format || undefined;
               if (fmt || schema) {
-                const parsed_raw = serde.parse(raw, fmt);
-                parsed = typeof parsed_raw === "object" && parsed_raw !== null ? parsed_raw : { raw };
+                try {
+                  const parsed_raw = serde.parse(raw, fmt);
+                  parsed = typeof parsed_raw === "object" && parsed_raw !== null ? parsed_raw : { raw };
+                } catch (e) {
+                  lastError = "Output parse failed: " + (e instanceof Error ? e.message : String(e));
+                  if (attempt < maxRetries) {
+                    if (agentOnRetryFn) await agentOnRetryFn(attempt + 1, lastError);
+                    continue;
+                  }
+                  break;
+                }
 
                 if (agentValidatorFn) {
                   const vr = await agentValidatorFn(raw, parsed);

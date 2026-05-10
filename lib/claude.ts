@@ -17,18 +17,18 @@ import { Agent, type AgentOpts } from "./agent.ts";
 export type Opts =
   & Partial<Pick<AgentOpts, "primary" | "fallback" | "timeout">>
   & {
-    /** Space-separated list of tools claude is permitted to invoke (e.g.
-     *  `"Bash Edit Write Read Glob Grep"`). Empty string = inference-only. */
     tools?: string;
     readonly?: boolean;
-    /** Permission mode flag passed to claude (e.g. `bypassPermissions`).
-     *  Empty = omit the flag, claude uses its default. */
     mode?: string;
+    /** JSON Schema string. When set, passes --output-format json
+     *  and --json-schema to the CLI for validated structured output. */
+    schema?: string;
   };
 
 export class Claude extends Agent {
   tools: string;
   mode: string;
+  schema?: string;
 
   static installed = false;
   static async install(): Promise<void> {
@@ -49,6 +49,7 @@ export class Claude extends Agent {
     });
     this.tools = opts.readonly ? "Read Glob Grep" : (opts.tools ?? "Bash Edit Write Read Glob Grep");
     this.mode = opts.mode ?? "bypassPermissions";
+    this.schema = opts.schema;
   }
 
   protected override get cmd(): string {
@@ -68,6 +69,9 @@ export class Claude extends Agent {
   protected override args({ model }: { model: string }): string[] {
     const out = ["--print", "--model", model, "--allowed-tools", this.tools];
     if (this.mode) out.push("--permission-mode", this.mode);
+    if (this.schema) {
+      out.push("--output-format", "json", "--json-schema", this.schema);
+    }
     return out;
   }
 }
