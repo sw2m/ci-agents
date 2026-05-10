@@ -1,39 +1,50 @@
-import { Agent, type AgentOptions } from "./agent.ts";
+// Google Gemini CLI wrapper. Pins the per-model arg shape used by the
+// `actions/agents/gemini` composite for Phase 1c / Phase 3 review.
+//
+// CLI flags (matching the composite):
+//   --yolo                     (non-interactive)
+//   --skip-trust               (skip workspace-trust prompt)
+//   -m <model>
 
-/**
- * Gemini agent — uses the `gemini` CLI with --yolo and --skip-trust
- * flags for non-interactive CI usage.
- */
+import { Agent, type AgentOpts } from "./agent.ts";
+
+export type Opts = Partial<Pick<AgentOpts, "primary" | "fallback" | "timeout">>;
+
 export class Gemini extends Agent {
-  private installed = false;
-
-  constructor(opts: AgentOptions = {}) {
-    super(opts);
+  static installed = false;
+  static async install(): Promise<void> {
+    if (Gemini.installed) return;
+    const check = new Deno.Command("gemini", { args: ["--version"], stdout: "null", stderr: "null" });
+    try { if ((await check.output()).code === 0) { Gemini.installed = true; return; } } catch {}
+    const proc = new Deno.Command("npm", { args: ["install", "-g", "@google/gemini-cli@latest"], stdout: "inherit", stderr: "inherit" });
+    const { code } = await proc.output();
+    if (code !== 0) throw new Error("Failed to install gemini-cli");
+    Gemini.installed = true;
   }
 
-  protected async install(): Promise<void> {
-    if (this.installed) return;
-    // Idempotent: install gemini CLI if not present
-    try {
-      const check = new Deno.Command("which", { args: ["gemini"], stdout: "null", stderr: "null" });
-      const result = await check.output();
-      if (!result.success) {
-        const install = new Deno.Command("npm", { args: ["install", "-g", "@google/gemini-cli"], stdout: "inherit", stderr: "inherit" });
-        const res = await install.output();
-        if (!res.success) throw new Error("Failed to install gemini CLI");
-      }
-    } catch {
-      const install = new Deno.Command("npm", { args: ["install", "-g", "@google/gemini-cli"], stdout: "inherit", stderr: "inherit" });
-      await install.output();
-    }
-    this.installed = true;
+  constructor(opts: Opts = {}) {
+    super({
+      primary: opts.primary ?? "gemini-2.5-pro",
+      fallback: opts.fallback ?? "gemini-2.5-flash",
+      timeout: opts.timeout ?? 900,
+    });
   }
 
-  protected command(): string[] {
-    const args = ["gemini", "--yolo", "--skip-trust"];
-    if (this.model) {
-      args.push("--model", this.model);
-    }
-    return args;
+  protected override get cmd(): string {
+    return "gemini";
+  }
+
+  override async run(input: ReadableStream<Uint8Array>) {
+    await Gemini.install();
+    return super.run(input);
+  }
+
+  override async prompt(model: string, input: ReadableStream<Uint8Array>) {
+    await Gemini.install();
+    return super.prompt(model, input);
+  }
+
+  protected override args({ model }: { model: string }): string[] {
+    return ["--yolo", "--skip-trust", "-m", model];
   }
 }

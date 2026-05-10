@@ -12,7 +12,10 @@ inputs:
     description: Path to JSON Schema file for output validation
     required: false
   model:
-    description: Model name to use
+    description: Primary model name
+    required: false
+  fallback-model:
+    description: Fallback model name (used when primary fails)
     required: false
   agent:
     description: Agent CLI to use (gemini or claude)
@@ -44,6 +47,7 @@ runs:
         INPUT_PROMPT: ${{ inputs.prompt }}
         INPUT_SCHEMA: ${{ inputs.schema }}
         INPUT_MODEL: ${{ inputs.model }}
+        INPUT_FALLBACK_MODEL: ${{ inputs.fallback-model }}
         INPUT_AGENT: ${{ inputs.agent }}
         INPUT_RETRIES: ${{ inputs.retries }}
         INPUT_TIMEOUT: ${{ inputs.timeout }}
@@ -55,7 +59,6 @@ runs:
         const ns = inputs.get("namespace");
         const promptInput = inputs.get("prompt");
         const schemaPath = inputs.get("schema");
-        const model = inputs.get("model");
         const agentType = inputs.get("agent") || "gemini";
         const maxRetries = parseInt(inputs.get("retries") || "3", 10);
         const timeout = parseInt(inputs.get("timeout") || "900", 10);
@@ -80,44 +83,47 @@ runs:
         let schema = null;
         if (schemaPath) schema = JSON.parse(await Deno.readTextFile(schemaPath));
 
-        // Create agent
-        const Agent = agentType === "claude" ? Claude : Gemini;
-        const agent = new Agent({ model, timeout });
+        // Create agent with primary/fallback
+        const opts = { timeout };
+        if (inputs.get("model")) opts.primary = inputs.get("model");
+        if (inputs.get("fallback-model")) opts.fallback = inputs.get("fallback-model");
+        const agent = agentType === "claude" ? new Claude(opts) : new Gemini(opts);
 
-        // Run with retry
+        // Run with retry on schema validation failure
         let lastError = "";
-        let succeeded = false;
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
           const fullPrompt = attempt === 0
             ? prompt
             : prompt + "\n\nPrevious attempt failed validation:\n" + lastError + "\n\nPlease fix the output.";
 
-          try {
-            const raw = await agent.run(fullPrompt);
-            await shared.set(ns, "raw", raw);
+          const r = await agent.run(new Blob([fullPrompt]).stream());
+          const raw = new TextDecoder().decode(r.output);
+          await shared.set(ns, "raw", raw);
 
-            // Parse frontmatter from raw output
-            const parsed = serde.parse(raw, "yaml");
-            const result = typeof parsed === "object" ? parsed : { raw };
-
-            if (schema) {
-              const v = validate(result, schema);
-              if (!v.valid) {
-                lastError = v.errors;
-                console.error("Schema validation failed (attempt " + (attempt + 1) + "): " + lastError);
-                if (attempt < maxRetries) continue;
-              }
-            }
-
-            await shared.set(ns, "result", JSON.stringify(result));
-            await output.set("result", JSON.stringify(result));
-            succeeded = true;
-            break;
-          } catch (e) {
-            lastError = e.message;
-            console.error("Agent error (attempt " + (attempt + 1) + "): " + lastError);
+          if (r.rc !== 0) {
+            const stderr = new TextDecoder().decode(r.err);
+            lastError = "Agent exited " + r.rc + ": " + stderr;
+            console.error("Agent failed (attempt " + (attempt + 1) + "): " + lastError);
             if (attempt >= maxRetries) {
               core.setFailed("Agent exhausted retries. Last error: " + lastError);
             }
+            continue;
           }
+
+          // Parse structured output from frontmatter
+          const parsed = serde.parse(raw, "yaml");
+          const result = typeof parsed === "object" && parsed !== null ? parsed : { raw };
+
+          if (schema) {
+            const v = validate(result, schema);
+            if (!v.valid) {
+              lastError = v.errors;
+              console.error("Schema validation failed (attempt " + (attempt + 1) + "): " + lastError);
+              if (attempt < maxRetries) continue;
+            }
+          }
+
+          await shared.set(ns, "result", JSON.stringify(result));
+          await output.set("result", JSON.stringify(result));
+          break;
         }
