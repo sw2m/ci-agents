@@ -17,6 +17,8 @@ export type AgentOpts = {
   fallback: string;
   /** Wall-clock seconds before the invocation is aborted. */
   timeout: number;
+  /** Additional CLI args appended after subclass args. */
+  extra?: string[];
 };
 
 /** Exit-code semantics. Open record so subclasses can register any
@@ -40,6 +42,7 @@ export class Agent {
   primary: string;
   fallback: string;
   timeout: number;
+  extra: string[];
 
   /** Override per-agent if the CLI emits non-default exit-code semantics. */
   protected codes: Codes = { timeout: 124 };
@@ -48,6 +51,7 @@ export class Agent {
     this.primary = opts.primary;
     this.fallback = opts.fallback;
     this.timeout = opts.timeout;
+    this.extra = opts.extra ?? [];
   }
 
   /** Override per-agent: the binary name (`claude`, `gemini`, ...) on PATH. */
@@ -69,7 +73,7 @@ export class Agent {
     const timer = setTimeout(() => ctrl.abort(), this.timeout * 1000);
     try {
       const proc = new Deno.Command(this.cmd, {
-        args: this.args({ model }),
+        args: [...this.args({ model }), ...this.extra],
         stdin: "piped",
         stdout: "piped",
         stderr: "piped",

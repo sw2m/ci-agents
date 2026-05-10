@@ -11,6 +11,9 @@ inputs:
   schema:
     description: Path to JSON Schema file for output validation
     required: false
+  format:
+    description: "Output format hint for serde parsing (json, yaml, toml, or omit to sniff)"
+    required: false
   model:
     description: Primary model name
     required: false
@@ -21,6 +24,15 @@ inputs:
     description: Agent CLI to use (gemini or claude)
     required: false
     default: gemini
+  api-key:
+    description: API key for the agent (GEMINI_API_KEY or ANTHROPIC_API_KEY)
+    required: true
+  org:
+    description: GitHub org for membership verification (skip if empty)
+    required: false
+  actor:
+    description: Actor login to verify (defaults to github.actor)
+    required: false
   retries:
     description: Max retries on structural failure
     required: false
@@ -40,6 +52,14 @@ runs:
   steps:
     - uses: sw2m/octoscript/action@main
 
+    - name: Verify org membership
+      if: ${{ inputs.org != '' }}
+      uses: sw2m/octoscript/org@main
+      with:
+        org: ${{ inputs.org }}
+        actor: ${{ inputs.actor || github.actor }}
+
+
     - id: run
       shell: octoscript {0}
       env:
@@ -49,7 +69,11 @@ runs:
         INPUT_MODEL: ${{ inputs.model }}
         INPUT_FALLBACK_MODEL: ${{ inputs.fallback-model }}
         INPUT_AGENT: ${{ inputs.agent }}
+        GEMINI_API_KEY: ${{ inputs.agent == 'gemini' && inputs.api-key || '' }}
+        ANTHROPIC_API_KEY: ${{ inputs.agent == 'claude' && inputs.api-key || '' }}
         INPUT_RETRIES: ${{ inputs.retries }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_EXTRA_ARGS: ${{ inputs.extra-args }}
         INPUT_TIMEOUT: ${{ inputs.timeout }}
       run: |
         const { Claude } = await import("../lib/claude.ts");
@@ -63,21 +87,16 @@ runs:
         const maxRetries = parseInt(inputs.get("retries") || "3", 10);
         const timeout = parseInt(inputs.get("timeout") || "900", 10);
 
-        // Build prompt
+        // Build prompt: read input from namespace, render template
+        const inputRaw = await shared.get(ns, "input");
+        const inputData = inputRaw ? serde.parse(inputRaw) : {};
         let prompt;
         if (promptInput && /\.(mustache|md|txt)$/.test(promptInput)) {
           const tpl = await Deno.readTextFile(promptInput);
-          const keys = await shared.list(ns);
-          const data = {};
-          for (const k of keys) data[k] = await shared.get(ns, k);
-          prompt = Mustache.render(tpl, data);
+          prompt = Mustache.render(tpl, inputData);
         } else {
           prompt = promptInput || "";
         }
-
-        // Append context if present
-        const ctx = await shared.get(ns, "context");
-        if (ctx) prompt += "\n\n" + ctx;
 
         // Load schema if provided
         let schema = null;
@@ -87,6 +106,8 @@ runs:
         const opts = { timeout };
         if (inputs.get("model")) opts.primary = inputs.get("model");
         if (inputs.get("fallback-model")) opts.fallback = inputs.get("fallback-model");
+        const extraArgs = inputs.get("extra-args");
+        if (extraArgs) opts.extra = extraArgs.split(/\s+/).filter(Boolean);
         const agent = agentType === "claude" ? new Claude(opts) : new Gemini(opts);
 
         // Run with retry on schema validation failure
@@ -106,24 +127,27 @@ runs:
             console.error("Agent failed (attempt " + (attempt + 1) + "): " + lastError);
             if (attempt >= maxRetries) {
               core.setFailed("Agent exhausted retries. Last error: " + lastError);
+              exit(1);
             }
             continue;
           }
 
-          // Parse structured output from frontmatter
-          const parsed = serde.parse(raw, "yaml");
-          const result = typeof parsed === "object" && parsed !== null ? parsed : { raw };
+          const fmt = inputs.get("format") || undefined;
+          if (fmt || schema) {
+            const parsed = serde.parse(raw, fmt);
+            const result = typeof parsed === "object" && parsed !== null ? parsed : { raw };
 
-          if (schema) {
-            const v = validate(result, schema);
-            if (!v.valid) {
-              lastError = v.errors;
-              console.error("Schema validation failed (attempt " + (attempt + 1) + "): " + lastError);
-              if (attempt < maxRetries) continue;
+            if (schema) {
+              const v = validate(result, schema);
+              if (!v.valid) {
+                lastError = v.errors;
+                console.error("Schema validation failed (attempt " + (attempt + 1) + "): " + lastError);
+                if (attempt < maxRetries) continue;
+              }
             }
-          }
 
-          await shared.set(ns, "result", JSON.stringify(result));
-          await output.set("result", JSON.stringify(result));
+            await shared.set(ns, "result", JSON.stringify(result));
+            await output.set("result", JSON.stringify(result));
+          }
           break;
         }

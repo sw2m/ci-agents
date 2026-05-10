@@ -1,11 +1,29 @@
 # ci-agents
 
-GitHub Actions for AI-powered code review using a three-layer architecture:
+Agent / Team / Panel review infrastructure for GitHub Actions.
 
-- **Agent** — Runs a single AI agent (Claude or Gemini) with a prompt, validates output against a JSON Schema, retries on structural failure.
-- **Team** — Runs N agents on the same task, passes outputs to an alignment evaluator, produces an alignment report. *(future)*
-- **Panel** — Aggregates team/agent results across categories, applies a ruling algorithm (any-fail, majority, custom), produces a ruling report. *(future)*
+Three layers, each independently usable:
 
-Actions are pure functions: inputs to structured outputs via `shared`. No side effects — consumer workflows decide what to do with the results.
+- **Agent** (`sw2m/ci-agents/agent`) — Run a single AI agent with schema validation and retry.
+- **Team** (`sw2m/ci-agents/team`) — Run N agents on the same task, evaluate alignment via a user-provided evaluator.
+- **Panel** (`sw2m/ci-agents/panel`) — Aggregate category results with a ruling algorithm (any-fail, majority, or custom script).
 
-Depends on [sw2m/octoscript](https://github.com/sw2m/octoscript) for the Deno runtime and shared/output/artifact/serde modules.
+All actions are pure: structured data in (`shared` module), structured data out (`shared` + step outputs). No side effects — no comments, no reviews, no issues. The consumer decides what to do with the results.
+
+## Data flow
+
+```
+shared.set(ns, "context", data)
+        ↓
+  Agent / Team / Panel
+        ↓
+shared.get(ns, "result|alignment|ruling")
+```
+
+## Budget tracking
+
+The 7-5-3-1-0 decay schedule is applied at the highest layer used. Panel reads prior comments to determine the round, then includes `round` and `budget` in the ruling output. The consumer uses this to decide whether to continue iterating.
+
+## Dependencies
+
+- [sw2m/octoscript](https://github.com/sw2m/octoscript) — Deno runtime, shared/output/serde/frontmatter globals
