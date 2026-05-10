@@ -73,8 +73,8 @@ runs:
         INPUT_PROMPT: ${{ inputs.prompt }}
         INPUT_SCHEMA: ${{ inputs.schema }}
         INPUT_EVALUATOR: ${{ inputs.evaluator }}
-        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
-        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        INPUT_GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
+        INPUT_ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
         INPUT_RETRIES: ${{ inputs.retries }}
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_VALIDATOR: ${{ inputs.validator }}
@@ -108,6 +108,12 @@ runs:
           core.setFailed("No prompt provided to team.");
           exit(1);
         }
+
+        // Route API keys
+        const gemKey = inputs.get("gemini-api-key");
+        const antKey = inputs.get("anthropic-api-key");
+        if (gemKey) Deno.env.set("GEMINI_API_KEY", gemKey);
+        if (antKey) Deno.env.set("ANTHROPIC_API_KEY", antKey);
 
         // Load optional hooks
         const validatorPath = inputs.get("validator");
