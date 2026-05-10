@@ -29,6 +29,12 @@ inputs:
   actor:
     description: Actor login to verify (defaults to github.actor)
     required: false
+  validator:
+    description: "Path to validation script (.ts). Runs per-agent after parse."
+    required: false
+  on-retry:
+    description: "Path to retry hook script (.ts). Called before each retry."
+    required: false
   evaluator:
     description: Path to alignment evaluator script (.ts). Receives parsed outputs array, returns alignment report.
     required: true
@@ -71,6 +77,8 @@ runs:
         ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
         INPUT_RETRIES: ${{ inputs.retries }}
         INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_VALIDATOR: ${{ inputs.validator }}
+        INPUT_ON_RETRY: ${{ inputs.on-retry }}
         INPUT_TIMEOUT: ${{ inputs.timeout }}
       run: |
         const { Claude } = await import("../lib/claude.ts");
@@ -78,7 +86,8 @@ runs:
         const { validate } = await import("../lib/validate.ts");
 
         const ns = inputs.get("namespace");
-        const agents = JSON.parse(inputs.get("agents") || "[]");
+        const agentsRaw = inputs.get("agents") || "[]";
+        const agents = serde.parse(agentsRaw);
         const promptInput = inputs.get("prompt");
         const schemaPath = inputs.get("schema");
         const evaluatorPath = inputs.get("evaluator");
@@ -100,6 +109,12 @@ runs:
           exit(1);
         }
 
+        // Load optional hooks
+        const validatorPath = inputs.get("validator");
+        const onRetryPath = inputs.get("on-retry");
+        const validatorFn = validatorPath ? (await import(validatorPath)).default : null;
+        const onRetryFn = onRetryPath ? (await import(onRetryPath)).default : null;
+
         // Load schema
         let schema = null;
         if (schemaPath) schema = JSON.parse(await Deno.readTextFile(schemaPath));
@@ -110,6 +125,9 @@ runs:
           if (cfg.model) opts.primary = cfg.model;
           if (cfg.fallback) opts.fallback = cfg.fallback;
           const agent = cfg.agent === "claude" ? new Claude(opts) : new Gemini(opts);
+
+          const cfgValidatorFn = cfg.validator ? (await import(cfg.validator)).default : validatorFn;
+          const cfgOnRetryFn = cfg.onRetry ? (await import(cfg.onRetry)).default : onRetryFn;
 
           let parsed = null;
           let lastError = "";
@@ -123,6 +141,7 @@ runs:
 
             if (r.rc !== 0) {
               lastError = "Agent exited " + r.rc;
+              if (attempt < maxRetries && cfgOnRetryFn) await cfgOnRetryFn(attempt + 1, lastError);
               continue;
             }
 
@@ -131,11 +150,23 @@ runs:
               parsed = serde.parse(raw, fmt);
               if (typeof parsed !== "object" || parsed === null) parsed = { raw };
 
+              if (cfgValidatorFn) {
+                const vr = await cfgValidatorFn(raw, parsed);
+                if (!vr.pass) {
+                  lastError = vr.error || "Validator rejected output";
+                  if (attempt >= maxRetries) break;
+                  if (cfgOnRetryFn) await cfgOnRetryFn(attempt + 1, lastError);
+                  continue;
+                }
+              }
+
               if (schema) {
                 const v = validate(parsed, schema);
                 if (!v.valid) {
                   lastError = v.errors;
-                  if (attempt < maxRetries) continue;
+                  if (attempt >= maxRetries) break;
+                  if (cfgOnRetryFn) await cfgOnRetryFn(attempt + 1, lastError);
+                  continue;
                 }
               }
             } else {

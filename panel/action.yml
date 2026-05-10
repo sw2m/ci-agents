@@ -97,6 +97,10 @@ runs:
           const maxRetries = cat.retries ?? 3;
           const timeout = cat.timeout ?? 900;
 
+          // Load per-category hooks
+          const catValidatorFn = cat.validator ? (await import(cat.validator)).default : null;
+          const catOnRetryFn = cat.onRetry ? (await import(cat.onRetry)).default : null;
+
           // Determine agents list
           const agentConfigs = cat.team
             ? cat.team.map((a) => typeof a === "string" ? { agent: a } : a)
@@ -109,6 +113,8 @@ runs:
             if (cfg.fallback) opts.fallback = cfg.fallback;
             if (cfg.extra) opts.extra = Array.isArray(cfg.extra) ? cfg.extra : cfg.extra.split(/\s+/).filter(Boolean);
             const agent = cfg.agent === "claude" ? new Claude(opts) : new Gemini(opts);
+            const agentValidatorFn = cfg.validator ? (await import(cfg.validator)).default : catValidatorFn;
+            const agentOnRetryFn = cfg.onRetry ? (await import(cfg.onRetry)).default : catOnRetryFn;
 
             let parsed = null;
             let lastError = "";
@@ -122,6 +128,7 @@ runs:
 
               if (r.rc !== 0) {
                 lastError = "Agent exited " + r.rc;
+                if (attempt < maxRetries && agentOnRetryFn) await agentOnRetryFn(attempt + 1, lastError);
                 continue;
               }
 
@@ -130,11 +137,25 @@ runs:
                 const parsed_raw = serde.parse(raw, fmt);
                 parsed = typeof parsed_raw === "object" && parsed_raw !== null ? parsed_raw : { raw };
 
+                if (agentValidatorFn) {
+                  const vr = await agentValidatorFn(raw, parsed);
+                  if (!vr.pass) {
+                    lastError = vr.error || "Validator rejected output";
+                    if (attempt < maxRetries) {
+                      if (agentOnRetryFn) await agentOnRetryFn(attempt + 1, lastError);
+                      continue;
+                    }
+                  }
+                }
+
                 if (schema) {
                   const v = validate(parsed, schema);
                   if (!v.valid) {
                     lastError = v.errors;
-                    if (attempt < maxRetries) continue;
+                    if (attempt < maxRetries) {
+                      if (agentOnRetryFn) await agentOnRetryFn(attempt + 1, lastError);
+                      continue;
+                    }
                   }
                 }
               }
