@@ -74,6 +74,8 @@ runs:
         INPUT_RETRIES: ${{ inputs.retries }}
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_EXTRA_ARGS: ${{ inputs.extra-args }}
+        INPUT_VALIDATOR: ${{ inputs.validator }}
+        INPUT_ON_RETRY: ${{ inputs.on-retry }}
         INPUT_TIMEOUT: ${{ inputs.timeout }}
       run: |
         const { Claude } = await import("../lib/claude.ts");
@@ -110,7 +112,13 @@ runs:
         if (extraArgs) opts.extra = extraArgs.split(/\s+/).filter(Boolean);
         const agent = agentType === "claude" ? new Claude(opts) : new Gemini(opts);
 
-        // Run with retry on schema validation failure
+        // Load optional hooks
+        const validatorPath = inputs.get("validator");
+        const onRetryPath = inputs.get("on-retry");
+        const validatorFn = validatorPath ? (await import(validatorPath)).default : null;
+        const onRetryFn = onRetryPath ? (await import(onRetryPath)).default : null;
+
+        // Run with retry
         let lastError = "";
         for (let attempt = 0; attempt <= maxRetries; attempt++) {
           const fullPrompt = attempt === 0
@@ -129,6 +137,7 @@ runs:
               core.setFailed("Agent exhausted retries. Last error: " + lastError);
               exit(1);
             }
+            if (onRetryFn) await onRetryFn(attempt + 1, lastError);
             continue;
           }
 
@@ -137,12 +146,31 @@ runs:
             const parsed = serde.parse(raw, fmt);
             const result = typeof parsed === "object" && parsed !== null ? parsed : { raw };
 
+            if (validatorFn) {
+              const vr = await validatorFn(raw, result);
+              if (!vr.pass) {
+                lastError = vr.error || "Validator rejected output";
+                console.error("Validator failed (attempt " + (attempt + 1) + "): " + lastError);
+                if (attempt >= maxRetries) {
+                  core.setFailed("Validator exhausted retries. Last error: " + lastError);
+                  exit(1);
+                }
+                if (onRetryFn) await onRetryFn(attempt + 1, lastError);
+                continue;
+              }
+            }
+
             if (schema) {
               const v = validate(result, schema);
               if (!v.valid) {
                 lastError = v.errors;
                 console.error("Schema validation failed (attempt " + (attempt + 1) + "): " + lastError);
-                if (attempt < maxRetries) continue;
+                if (attempt >= maxRetries) {
+                  core.setFailed("Schema validation exhausted retries. Last error: " + lastError);
+                  exit(1);
+                }
+                if (onRetryFn) await onRetryFn(attempt + 1, lastError);
+                continue;
               }
             }
 
