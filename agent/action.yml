@@ -119,6 +119,9 @@ runs:
         if (inputs.get("fallback-model")) opts.fallback = inputs.get("fallback-model");
         const readonly = inputs.get("readonly") === "true";
         if (readonly) opts.readonly = true;
+        if (schemaPath && agentType === "claude") {
+          opts.schema = await Deno.readTextFile(schemaPath);
+        }
         const extraArgs = inputs.get("extra-args");
         if (extraArgs) opts.extra = extraArgs.split(/\s+/).filter(Boolean);
         const agent = agentType === "claude" ? new Claude(opts) : new Gemini(opts);
@@ -154,7 +157,19 @@ runs:
 
           const fmt = inputs.get("format") || undefined;
           if (fmt || schema) {
-            const parsed = serde.parse(raw, fmt);
+            let parsed;
+            try {
+              parsed = serde.parse(raw, fmt);
+            } catch (e) {
+              lastError = "Output parse failed: " + (e instanceof Error ? e.message : String(e));
+              console.error("Parse failed (attempt " + (attempt + 1) + "): " + lastError);
+              if (attempt >= maxRetries) {
+                core.setFailed("Parse exhausted retries. Last error: " + lastError);
+                exit(1);
+              }
+              if (onRetryFn) await onRetryFn(attempt + 1, lastError);
+              continue;
+            }
             const result = typeof parsed === "object" && parsed !== null ? parsed : { raw };
 
             if (validatorFn) {

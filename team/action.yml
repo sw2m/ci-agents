@@ -150,6 +150,7 @@ runs:
           const opts = { timeout };
           if (cfg.model) opts.primary = cfg.model;
           if (cfg.fallback) opts.fallback = cfg.fallback;
+          if (schema && cfg.agent === "claude") opts.schema = JSON.stringify(schema);
           const agent = cfg.agent === "claude" ? new Claude(opts) : new Gemini(opts);
 
           const cfgValidatorFn = cfg.validator ? (await import(cfg.validator)).default : validatorFn;
@@ -173,7 +174,16 @@ runs:
 
             const fmt = inputs.get("format") || undefined;
             if (fmt || schema) {
-              parsed = serde.parse(raw, fmt);
+              try {
+                parsed = serde.parse(raw, fmt);
+              } catch (e) {
+                lastError = "Output parse failed: " + (e instanceof Error ? e.message : String(e));
+                if (attempt < maxRetries) {
+                  if (cfgOnRetryFn) await cfgOnRetryFn(attempt + 1, lastError);
+                  continue;
+                }
+                break;
+              }
               if (typeof parsed !== "object" || parsed === null) parsed = { raw };
 
               if (cfgValidatorFn) {
