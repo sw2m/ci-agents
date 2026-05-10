@@ -8,6 +8,7 @@
 
 const { Agent } = await import("./agent.ts?t=" + Date.now()) as { Agent: typeof import("./agent.ts").Agent };
 type AgentOpts = import("./agent.ts").AgentOpts;
+type Result = import("./agent.ts").Result;
 
 export type Opts = Partial<Pick<AgentOpts, "primary" | "fallback" | "timeout">>;
 
@@ -39,12 +40,22 @@ export class Gemini extends Agent {
 
   override async run(input: ReadableStream<Uint8Array>) {
     await Gemini.install();
-    return super.run(input);
+    return this.stripFences(await super.run(input));
   }
 
   override async prompt(model: string, input: ReadableStream<Uint8Array>) {
     await Gemini.install();
-    return super.prompt(model, input);
+    return this.stripFences(await super.prompt(model, input));
+  }
+
+  private stripFences(r: Result): Result {
+    if (r.rc !== 0) return r;
+    const text = new TextDecoder().decode(r.output);
+    const stripped = text.replace(/^\s*```[a-z]*\n?/gm, "").replace(/\n?```\s*$/gm, "").trim();
+    if (stripped !== text.trim()) {
+      return { rc: r.rc, output: new TextEncoder().encode(stripped), err: r.err };
+    }
+    return r;
   }
 
   protected override args({ model }: { model: string }): string[] {

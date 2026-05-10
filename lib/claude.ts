@@ -14,6 +14,7 @@
 
 const { Agent } = await import("./agent.ts?t=" + Date.now()) as { Agent: typeof import("./agent.ts").Agent };
 type AgentOpts = import("./agent.ts").AgentOpts;
+type Result = import("./agent.ts").Result;
 
 export type Opts =
   & Partial<Pick<AgentOpts, "primary" | "fallback" | "timeout">>
@@ -61,19 +62,34 @@ export class Claude extends Agent {
 
   override async run(input: ReadableStream<Uint8Array>) {
     await Claude.install();
-    return super.run(input);
+    const r = await super.run(input);
+    return this.schema ? this.unwrap(r) : r;
   }
 
   override async prompt(model: string, input: ReadableStream<Uint8Array>) {
     await Claude.install();
-    return super.prompt(model, input);
+    const r = await super.prompt(model, input);
+    return this.schema ? this.unwrap(r) : r;
+  }
+
+  private unwrap(r: Result): Result {
+    if (r.rc !== 0) return r;
+    try {
+      const envelope = JSON.parse(new TextDecoder().decode(r.output));
+      const structured = envelope.structured_output;
+      if (structured !== undefined) {
+        const json = JSON.stringify(structured);
+        return { rc: r.rc, output: new TextEncoder().encode(json), err: r.err };
+      }
+    } catch { /* not an envelope, return as-is */ }
+    return r;
   }
 
   protected override args({ model }: { model: string }): string[] {
     const out = ["--print", "--model", model, "--allowed-tools", this.tools];
     if (this.mode) out.push("--permission-mode", this.mode);
     if (this.schema) {
-      out.push("--json-schema", this.schema);
+      out.push("--output-format", "json", "--json-schema", this.schema);
     }
     return out;
   }
