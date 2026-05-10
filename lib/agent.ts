@@ -21,6 +21,8 @@ export type AgentOpts = {
   extra?: string[];
   /** Restrict to read-only filesystem access. */
   readonly?: boolean;
+  /** Tee stdout and stderr to console for debugging. */
+  debug?: boolean;
 };
 
 /** Exit-code semantics. Open record so subclasses can register any
@@ -45,6 +47,7 @@ export class Agent {
   fallback: string;
   timeout: number;
   extra: string[];
+  debug: boolean;
 
   /** Override per-agent if the CLI emits non-default exit-code semantics. */
   protected codes: Codes = { timeout: 124 };
@@ -54,6 +57,7 @@ export class Agent {
     this.fallback = opts.fallback;
     this.timeout = opts.timeout;
     this.extra = opts.extra ?? [];
+    this.debug = opts.debug ?? false;
   }
 
   /** Override per-agent: the binary name (`claude`, `gemini`, ...) on PATH. */
@@ -106,6 +110,17 @@ export class Agent {
           new Response(proc.stdout).bytes(),
           new Response(proc.stderr).bytes(),
         ]);
+        if (this.debug) {
+          console.log("::group::" + this.cmd + " (" + model + ") stdout");
+          console.log(new TextDecoder().decode(output));
+          console.log("::endgroup::");
+          const stderrText = new TextDecoder().decode(err).trim();
+          if (stderrText) {
+            console.log("::group::" + this.cmd + " (" + model + ") stderr");
+            console.log(stderrText);
+            console.log("::endgroup::");
+          }
+        }
         const status = await proc.status;
         const rc = status.signal === "SIGTERM" ? this.codes.timeout : (status.code ?? 1);
         return { rc, output, err };

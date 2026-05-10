@@ -41,6 +41,10 @@ inputs:
     description: Agent timeout in seconds
     required: false
     default: "900"
+  debug:
+    description: "Tee agent stdout/stderr to console"
+    required: false
+    default: "false"
 
 outputs:
   result:
@@ -76,6 +80,7 @@ runs:
         INPUT_VALIDATOR: ${{ env.INPUT_VALIDATOR || inputs.validator }}
         INPUT_ON_RETRY: ${{ env.INPUT_ON_RETRY || inputs.on-retry }}
         INPUT_TIMEOUT: ${{ env.INPUT_TIMEOUT || inputs.timeout }}
+        INPUT_DEBUG: ${{ env.INPUT_DEBUG || inputs.debug }}
       run: |
         const { Claude } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/claude.ts?t=" + Date.now());
         const { Gemini } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/gemini.ts?t=" + Date.now());
@@ -117,6 +122,8 @@ runs:
         const opts = { timeout };
         if (inputs.get("model")) opts.primary = inputs.get("model");
         if (inputs.get("fallback-model")) opts.fallback = inputs.get("fallback-model");
+        const debug = inputs.get("debug") === "true";
+        if (debug) opts.debug = true;
         const readonly = inputs.get("readonly") === "true";
         if (readonly) opts.readonly = true;
         if (schemaPath && agentType === "claude") {
