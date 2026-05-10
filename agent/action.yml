@@ -69,8 +69,7 @@ runs:
         INPUT_MODEL: ${{ inputs.model }}
         INPUT_FALLBACK_MODEL: ${{ inputs.fallback-model }}
         INPUT_AGENT: ${{ inputs.agent }}
-        GEMINI_API_KEY: ${{ inputs.agent == 'gemini' && inputs.api-key || '' }}
-        ANTHROPIC_API_KEY: ${{ inputs.agent == 'claude' && inputs.api-key || '' }}
+        INPUT_API_KEY: ${{ inputs.api-key }}
         INPUT_RETRIES: ${{ inputs.retries }}
         INPUT_FORMAT: ${{ inputs.format }}
         INPUT_EXTRA_ARGS: ${{ inputs.extra-args }}
@@ -103,6 +102,11 @@ runs:
         // Load schema if provided
         let schema = null;
         if (schemaPath) schema = JSON.parse(await Deno.readTextFile(schemaPath));
+
+        // Route API key to the correct env var
+        const apiKey = inputs.get("api-key");
+        if (apiKey && agentType === "gemini") Deno.env.set("GEMINI_API_KEY", apiKey);
+        if (apiKey && agentType === "claude") Deno.env.set("ANTHROPIC_API_KEY", apiKey);
 
         // Create agent with primary/fallback
         const opts = { timeout };

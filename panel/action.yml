@@ -48,8 +48,8 @@ runs:
       env:
         INPUT_NAMESPACE: ${{ inputs.namespace }}
         INPUT_CONFIG: ${{ inputs.config }}
-        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
-        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        INPUT_GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
+        INPUT_ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
         INPUT_ROUND: ${{ inputs.round }}
       run: |
         const { Claude } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/claude.ts?t=" + Date.now());
@@ -58,6 +58,12 @@ runs:
         const { budget } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/budget.ts?t=" + Date.now());
 
         const ns = inputs.get("namespace");
+        // Route API keys
+        const gemKey = inputs.get("gemini-api-key");
+        const antKey = inputs.get("anthropic-api-key");
+        if (gemKey) Deno.env.set("GEMINI_API_KEY", gemKey);
+        if (antKey) Deno.env.set("ANTHROPIC_API_KEY", antKey);
+
         const configInput = inputs.get("config");
         const fileConfig = await serde.load(configInput);
         const overlayRaw = await shared.get(ns, "config");
