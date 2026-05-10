@@ -63,19 +63,19 @@ runs:
     - id: run
       shell: octoscript {0}
       env:
-        INPUT_NAMESPACE: ${{ inputs.namespace || env.INPUT_NAMESPACE }}
-        INPUT_PROMPT: ${{ inputs.prompt || env.INPUT_PROMPT }}
-        INPUT_SCHEMA: ${{ inputs.schema || env.INPUT_SCHEMA }}
-        INPUT_MODEL: ${{ inputs.model || env.INPUT_MODEL }}
-        INPUT_FALLBACK_MODEL: ${{ inputs.fallback-model || env.INPUT_FALLBACK_MODEL }}
-        INPUT_AGENT: ${{ inputs.agent || env.INPUT_AGENT }}
-        INPUT_API_KEY: ${{ inputs.api-key || env.INPUT_API_KEY }}
-        INPUT_RETRIES: ${{ inputs.retries || env.INPUT_RETRIES }}
-        INPUT_FORMAT: ${{ inputs.format || env.INPUT_FORMAT }}
-        INPUT_EXTRA_ARGS: ${{ inputs.extra-args || env.INPUT_EXTRA_ARGS }}
-        INPUT_VALIDATOR: ${{ inputs.validator || env.INPUT_VALIDATOR }}
-        INPUT_ON_RETRY: ${{ inputs.on-retry || env.INPUT_ON_RETRY }}
-        INPUT_TIMEOUT: ${{ inputs.timeout || env.INPUT_TIMEOUT }}
+        INPUT_NAMESPACE: ${{ env.INPUT_NAMESPACE || inputs.namespace }}
+        INPUT_PROMPT: ${{ env.INPUT_PROMPT || inputs.prompt }}
+        INPUT_SCHEMA: ${{ env.INPUT_SCHEMA || inputs.schema }}
+        INPUT_MODEL: ${{ env.INPUT_MODEL || inputs.model }}
+        INPUT_FALLBACK_MODEL: ${{ env.INPUT_FALLBACK_MODEL || inputs.fallback-model }}
+        INPUT_AGENT: ${{ env.INPUT_AGENT || inputs.agent }}
+        INPUT_API_KEY: ${{ env.INPUT_API_KEY || inputs.api-key }}
+        INPUT_RETRIES: ${{ env.INPUT_RETRIES || inputs.retries }}
+        INPUT_FORMAT: ${{ env.INPUT_FORMAT || inputs.format }}
+        INPUT_EXTRA_ARGS: ${{ env.INPUT_EXTRA_ARGS || inputs.extra-args }}
+        INPUT_VALIDATOR: ${{ env.INPUT_VALIDATOR || inputs.validator }}
+        INPUT_ON_RETRY: ${{ env.INPUT_ON_RETRY || inputs.on-retry }}
+        INPUT_TIMEOUT: ${{ env.INPUT_TIMEOUT || inputs.timeout }}
       run: |
         const { Claude } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/claude.ts?t=" + Date.now());
         const { Gemini } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/gemini.ts?t=" + Date.now());
