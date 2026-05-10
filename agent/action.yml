@@ -1,0 +1,123 @@
+name: Agent
+description: Run a single AI agent with prompt, schema validation, and retry logic.
+
+inputs:
+  namespace:
+    description: Shared module namespace for input/output
+    required: true
+  prompt:
+    description: Path to prompt template (.mustache/.md/.txt) or prompt text
+    required: true
+  schema:
+    description: Path to JSON Schema file for output validation
+    required: false
+  model:
+    description: Model name to use
+    required: false
+  agent:
+    description: Agent CLI to use (gemini or claude)
+    required: false
+    default: gemini
+  retries:
+    description: Max retries on structural failure
+    required: false
+    default: "3"
+  timeout:
+    description: Agent timeout in seconds
+    required: false
+    default: "900"
+
+outputs:
+  result:
+    description: JSON string of parsed structured output
+    value: ${{ steps.run.outputs.result }}
+
+runs:
+  using: composite
+  steps:
+    - uses: sw2m/octoscript/action@main
+
+    - id: run
+      shell: octoscript {0}
+      env:
+        INPUT_NAMESPACE: ${{ inputs.namespace }}
+        INPUT_PROMPT: ${{ inputs.prompt }}
+        INPUT_SCHEMA: ${{ inputs.schema }}
+        INPUT_MODEL: ${{ inputs.model }}
+        INPUT_AGENT: ${{ inputs.agent }}
+        INPUT_RETRIES: ${{ inputs.retries }}
+        INPUT_TIMEOUT: ${{ inputs.timeout }}
+      run: |
+        const { Claude } = await import("../lib/claude.ts");
+        const { Gemini } = await import("../lib/gemini.ts");
+        const { validate } = await import("../lib/validate.ts");
+
+        const ns = inputs.get("namespace");
+        const promptInput = inputs.get("prompt");
+        const schemaPath = inputs.get("schema");
+        const model = inputs.get("model");
+        const agentType = inputs.get("agent") || "gemini";
+        const maxRetries = parseInt(inputs.get("retries") || "3", 10);
+        const timeout = parseInt(inputs.get("timeout") || "900", 10);
+
+        // Build prompt
+        let prompt;
+        if (promptInput && /\.(mustache|md|txt)$/.test(promptInput)) {
+          const tpl = await Deno.readTextFile(promptInput);
+          const keys = await shared.list(ns);
+          const data = {};
+          for (const k of keys) data[k] = await shared.get(ns, k);
+          prompt = Mustache.render(tpl, data);
+        } else {
+          prompt = promptInput || "";
+        }
+
+        // Append context if present
+        const ctx = await shared.get(ns, "context");
+        if (ctx) prompt += "\n\n" + ctx;
+
+        // Load schema if provided
+        let schema = null;
+        if (schemaPath) schema = JSON.parse(await Deno.readTextFile(schemaPath));
+
+        // Create agent
+        const Agent = agentType === "claude" ? Claude : Gemini;
+        const agent = new Agent({ model, timeout });
+
+        // Run with retry
+        let lastError = "";
+        let succeeded = false;
+        for (let attempt = 0; attempt <= maxRetries; attempt++) {
+          const fullPrompt = attempt === 0
+            ? prompt
+            : prompt + "\n\nPrevious attempt failed validation:\n" + lastError + "\n\nPlease fix the output.";
+
+          try {
+            const raw = await agent.run(fullPrompt);
+            await shared.set(ns, "raw", raw);
+
+            // Parse frontmatter from raw output
+            const parsed = serde.parse(raw, "yaml");
+            const result = typeof parsed === "object" ? parsed : { raw };
+
+            if (schema) {
+              const v = validate(result, schema);
+              if (!v.valid) {
+                lastError = v.errors;
+                console.error("Schema validation failed (attempt " + (attempt + 1) + "): " + lastError);
+                if (attempt < maxRetries) continue;
+              }
+            }
+
+            await shared.set(ns, "result", JSON.stringify(result));
+            await output.set("result", JSON.stringify(result));
+            succeeded = true;
+            break;
+          } catch (e) {
+            lastError = e.message;
+            console.error("Agent error (attempt " + (attempt + 1) + "): " + lastError);
+            if (attempt >= maxRetries) {
+              core.setFailed("Agent exhausted retries. Last error: " + lastError);
+            }
+          }
+        }
