@@ -78,9 +78,9 @@ runs:
         INPUT_ON_RETRY: ${{ inputs.on-retry }}
         INPUT_TIMEOUT: ${{ inputs.timeout }}
       run: |
-        const { Claude } = await import("../lib/claude.ts");
-        const { Gemini } = await import("../lib/gemini.ts");
-        const { validate } = await import("../lib/validate.ts");
+        const { Claude } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/claude.ts?t=" + Date.now());
+        const { Gemini } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/gemini.ts?t=" + Date.now());
+        const { validate } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/validate.ts?t=" + Date.now());
 
         const ns = inputs.get("namespace");
         const promptInput = inputs.get("prompt");
