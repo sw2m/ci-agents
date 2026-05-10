@@ -88,15 +88,20 @@ runs:
         const maxRetries = parseInt(inputs.get("retries") || "3", 10);
         const timeout = parseInt(inputs.get("timeout") || "900", 10);
 
-        // Build prompt: read input from namespace, render template
-        const inputRaw = await shared.get(ns, "input");
-        const inputData = inputRaw ? serde.parse(inputRaw) : {};
+        // Build prompt
+        const promptSrc = promptInput || await shared.get(ns, "prompt") || "";
+        let tpl = promptSrc;
+        if (/\.(mustache|md|txt)$/.test(promptSrc)) {
+          tpl = await Deno.readTextFile(promptSrc);
+        }
+        const hasVars = Mustache.parse(tpl).some((t) => t[0] !== "text");
         let prompt;
-        if (promptInput && /\.(mustache|md|txt)$/.test(promptInput)) {
-          const tpl = await Deno.readTextFile(promptInput);
+        if (hasVars) {
+          const inputRaw = await shared.get(ns, "input");
+          const inputData = inputRaw ? serde.parse(inputRaw) : {};
           prompt = Mustache.render(tpl, inputData);
         } else {
-          prompt = promptInput || "";
+          prompt = tpl;
         }
 
         // Load schema if provided
