@@ -47,6 +47,8 @@ export class Claude extends Agent {
       primary: opts.primary ?? "claude-opus-4-5",
       fallback: opts.fallback ?? "claude-sonnet-4-5",
       timeout: opts.timeout ?? 900,
+      extra: opts.extra,
+      debug: opts.debug,
     });
     this.tools = opts.readonly ? "Read Glob Grep" : (opts.tools ?? "Bash Edit Write Read Glob Grep");
     this.mode = opts.mode ?? "bypassPermissions";

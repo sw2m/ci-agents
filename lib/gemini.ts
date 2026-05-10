@@ -28,6 +28,8 @@ export class Gemini extends Agent {
       primary: opts.primary ?? "gemini-2.5-pro",
       fallback: opts.fallback ?? "gemini-2.5-flash",
       timeout: opts.timeout ?? 900,
+      extra: opts.extra,
+      debug: opts.debug,
     });
   }
 
