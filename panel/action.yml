@@ -20,6 +20,10 @@ inputs:
   actor:
     description: Actor login to verify (defaults to github.actor)
     required: false
+  debug:
+    description: "Tee agent stdout/stderr to console"
+    required: false
+    default: "false"
   round:
     description: Current review round (1-based). Consumer determines this from whatever data source it uses.
     required: false
@@ -49,6 +53,7 @@ runs:
         INPUT_NAMESPACE: ${{ env.INPUT_NAMESPACE || inputs.namespace }}
         INPUT_CONFIG: ${{ env.INPUT_CONFIG || inputs.config }}
         INPUT_ROUND: ${{ env.INPUT_ROUND || inputs.round }}
+        INPUT_DEBUG: ${{ env.INPUT_DEBUG || inputs.debug }}
       run: |
         const { Claude } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/claude.ts?t=" + Date.now());
         const { Gemini } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/gemini.ts?t=" + Date.now());
@@ -118,7 +123,8 @@ runs:
 
           // Run all agents in parallel
           async function invoke(cfg) {
-            const opts = { timeout };
+            const debug = inputs.get("debug") === "true" || cat.debug;
+            const opts = { timeout, debug };
             if (cfg.model) opts.primary = cfg.model;
             if (cfg.fallback) opts.fallback = cfg.fallback;
             if (cfg.readonly || cat.readonly) opts.readonly = true;
