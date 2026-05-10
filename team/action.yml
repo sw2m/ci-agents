@@ -100,6 +100,12 @@ runs:
         INPUT_ON_RETRY: ${{ env.INPUT_ON_RETRY || inputs.on-retry }}
         INPUT_TIMEOUT: ${{ env.INPUT_TIMEOUT || inputs.timeout }}
         INPUT_DEBUG: ${{ env.INPUT_DEBUG || inputs.debug }}
+        INPUT_ROUND: ${{ env.INPUT_ROUND || inputs.round }}
+        INPUT_GEMINI_API_KEY: ${{ env.INPUT_GEMINI_API_KEY || inputs.gemini-api-key }}
+        INPUT_BUDGET_QUERIES: ${{ env.INPUT_BUDGET_QUERIES || inputs.budget-queries }}
+        INPUT_BUDGET_OVERFLOW: ${{ env.INPUT_BUDGET_OVERFLOW || inputs.budget-overflow }}
+        INPUT_BUDGET: ${{ env.INPUT_BUDGET || inputs.budget }}
+        INPUT_ANTHROPIC_API_KEY: ${{ env.INPUT_ANTHROPIC_API_KEY || inputs.anthropic-api-key }}
       run: |
         const { Claude } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/claude.ts?t=" + Date.now());
         const { Gemini } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/gemini.ts?t=" + Date.now());
