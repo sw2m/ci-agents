@@ -178,6 +178,28 @@ runs:
               }
             }
 
+            // Apply budget if configured
+            const budgetQueriesRaw = inputs.get("budget-queries");
+            if (budgetQueriesRaw) {
+              const { apply } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/budget.ts?t=" + Date.now());
+              const budgetQueries = JSON.parse(budgetQueriesRaw);
+              const overflowPath = inputs.get("budget-overflow");
+              if (!overflowPath) {
+                core.setFailed("budget-queries set but budget-overflow not provided");
+                exit(1);
+              }
+              const overflowHandlers = (await import(overflowPath)).default;
+              const { cap } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/budget.ts?t=" + Date.now());
+              const budgetInput = inputs.get("budget");
+              const currentRound = parseInt(inputs.get("round") || "1", 10);
+              const budgetCap = budgetInput ? parseInt(budgetInput, 10) : cap(currentRound);
+              const budgetMeta = await apply(
+                result, budgetCap, budgetQueries,
+                serde.query, overflowHandlers,
+              );
+              await shared.set(ns, "budget", JSON.stringify(budgetMeta));
+            }
+
             await shared.set(ns, "result", JSON.stringify(result));
             await output.set("result", JSON.stringify(result));
           }

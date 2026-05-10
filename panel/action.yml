@@ -71,6 +71,7 @@ runs:
         const rulingAlgo = config.ruling || "any-fail";
         const currentRound = parseInt(inputs.get("round") || "1", 10);
         const currentBudget = budget(currentRound);
+        // budgetCap is passed to each category's agents
 
         // Run each category's team/agent in parallel
         async function runCategory(name, cat) {
@@ -165,6 +166,15 @@ runs:
               }
               break;
             }
+            // Apply budget if configured at category level
+            if (cat.budgetQueries && parsed) {
+              const { apply } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/budget.ts?t=" + Date.now());
+              const overflowPath = cat.budgetOverflow;
+              if (!overflowPath) { throw new Error("budgetQueries set but budgetOverflow not provided for category " + name); }
+              const handlers = (await import(overflowPath)).default;
+              await apply(parsed, currentBudget, cat.budgetQueries, serde.query, handlers);
+            }
+
             return { agent: cfg.agent, model: cfg.model || "default", output: parsed };
           }
 

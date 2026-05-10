@@ -35,6 +35,19 @@ inputs:
   on-retry:
     description: "Path to retry hook script (.ts). Called before each retry."
     required: false
+  budget-queries:
+    description: "JSON object mapping query names to JSONata expressions"
+    required: false
+  budget-overflow:
+    description: "Path to overflow handler script (.ts). Required when budget-queries is set."
+    required: false
+  budget:
+    description: "Budget cap (pre-computed by panel). Takes precedence over round."
+    required: false
+  round:
+    description: "Current review round (1-based). Used to compute budget if this is the highest layer."
+    required: false
+    default: "1"
   evaluator:
     description: Path to alignment evaluator script (.ts). Receives parsed outputs array, returns alignment report.
     required: true
@@ -178,6 +191,19 @@ runs:
             }
             break;
           }
+          // Apply budget if configured
+          const bqRaw = inputs.get("budget-queries");
+          if (bqRaw && parsed) {
+            const { apply, cap } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/budget.ts?t=" + Date.now());
+            const bq = JSON.parse(bqRaw);
+            const overflowPath = inputs.get("budget-overflow");
+            if (!overflowPath) { throw new Error("budget-queries set but budget-overflow not provided"); }
+            const handlers = (await import(overflowPath)).default;
+            const budgetInput = inputs.get("budget");
+            const budgetCap = budgetInput ? parseInt(budgetInput, 10) : cap(parseInt(inputs.get("round") || "1", 10));
+            await apply(parsed, budgetCap, bq, serde.query, handlers);
+          }
+
           return { agent: cfg.agent, model: cfg.model || "default", output: parsed };
         }
         const results = await Promise.all(agents.map(invoke));
