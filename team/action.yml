@@ -1,0 +1,157 @@
+name: Team
+description: Run N agents on the same task, evaluate alignment of their outputs.
+
+inputs:
+  namespace:
+    description: Shared module namespace for input/output
+    required: true
+  agents:
+    description: "JSON array of agent configs, e.g. [{\"agent\":\"gemini\",\"model\":\"gemini-2.5-pro\"},{\"agent\":\"claude\"}]"
+    required: true
+  prompt:
+    description: Path to prompt template (.mustache/.md/.txt) or prompt text
+    required: true
+  schema:
+    description: Path to JSON Schema file for output validation
+    required: false
+  format:
+    description: "Output format hint for serde parsing (json, yaml, toml, or omit to sniff)"
+    required: false
+  gemini-api-key:
+    description: Gemini API key (required if any team member is gemini)
+    required: false
+  anthropic-api-key:
+    description: Anthropic API key (required if any team member is claude)
+    required: false
+  org:
+    description: GitHub org for membership verification (skip if empty)
+    required: false
+  actor:
+    description: Actor login to verify (defaults to github.actor)
+    required: false
+  evaluator:
+    description: Path to alignment evaluator script (.ts). Receives parsed outputs array, returns alignment report.
+    required: true
+  retries:
+    description: Max retries per agent on structural failure
+    required: false
+    default: "3"
+  timeout:
+    description: Agent timeout in seconds
+    required: false
+    default: "900"
+
+outputs:
+  alignment:
+    description: JSON alignment report from the evaluator
+    value: ${{ steps.evaluate.outputs.alignment }}
+
+runs:
+  using: composite
+  steps:
+    - uses: sw2m/octoscript/action@main
+
+    - name: Verify org membership
+      if: ${{ inputs.org != '' }}
+      uses: sw2m/octoscript/org@main
+      with:
+        org: ${{ inputs.org }}
+        actor: ${{ inputs.actor || github.actor }}
+
+
+    - id: evaluate
+      shell: octoscript {0}
+      env:
+        INPUT_NAMESPACE: ${{ inputs.namespace }}
+        INPUT_AGENTS: ${{ inputs.agents }}
+        INPUT_PROMPT: ${{ inputs.prompt }}
+        INPUT_SCHEMA: ${{ inputs.schema }}
+        INPUT_EVALUATOR: ${{ inputs.evaluator }}
+        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        INPUT_RETRIES: ${{ inputs.retries }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_TIMEOUT: ${{ inputs.timeout }}
+      run: |
+        const { Claude } = await import("../lib/claude.ts");
+        const { Gemini } = await import("../lib/gemini.ts");
+        const { validate } = await import("../lib/validate.ts");
+
+        const ns = inputs.get("namespace");
+        const agents = JSON.parse(inputs.get("agents") || "[]");
+        const promptInput = inputs.get("prompt");
+        const schemaPath = inputs.get("schema");
+        const evaluatorPath = inputs.get("evaluator");
+        const maxRetries = parseInt(inputs.get("retries") || "3", 10);
+        const timeout = parseInt(inputs.get("timeout") || "900", 10);
+
+        // Build prompt: read input from namespace, render template
+        const inputRaw = await shared.get(ns, "input");
+        const inputData = inputRaw ? serde.parse(inputRaw) : {};
+        let prompt;
+        if (promptInput && /\.(mustache|md|txt)$/.test(promptInput)) {
+          const tpl = await Deno.readTextFile(promptInput);
+          prompt = Mustache.render(tpl, inputData);
+        } else {
+          prompt = promptInput || "";
+        }
+        if (!prompt.trim()) {
+          core.setFailed("No prompt provided to team.");
+          exit(1);
+        }
+
+        // Load schema
+        let schema = null;
+        if (schemaPath) schema = JSON.parse(await Deno.readTextFile(schemaPath));
+
+        // Run all agents in parallel
+        async function invoke(cfg) {
+          const opts = { timeout };
+          if (cfg.model) opts.primary = cfg.model;
+          if (cfg.fallback) opts.fallback = cfg.fallback;
+          const agent = cfg.agent === "claude" ? new Claude(opts) : new Gemini(opts);
+
+          let parsed = null;
+          let lastError = "";
+          for (let attempt = 0; attempt <= maxRetries; attempt++) {
+            const fullPrompt = attempt === 0
+              ? prompt
+              : prompt + "\n\nPrevious attempt failed validation:\n" + lastError + "\n\nPlease fix the output.";
+
+            const r = await agent.run(new Blob([fullPrompt]).stream());
+            const raw = new TextDecoder().decode(r.output);
+
+            if (r.rc !== 0) {
+              lastError = "Agent exited " + r.rc;
+              continue;
+            }
+
+            const fmt = inputs.get("format") || undefined;
+            if (fmt || schema) {
+              parsed = serde.parse(raw, fmt);
+              if (typeof parsed !== "object" || parsed === null) parsed = { raw };
+
+              if (schema) {
+                const v = validate(parsed, schema);
+                if (!v.valid) {
+                  lastError = v.errors;
+                  if (attempt < maxRetries) continue;
+                }
+              }
+            } else {
+              parsed = { raw };
+            }
+            break;
+          }
+          return { agent: cfg.agent, model: cfg.model || "default", output: parsed };
+        }
+        const results = await Promise.all(agents.map(invoke));
+
+        await shared.set(ns, "outputs", JSON.stringify(results));
+
+        // Run evaluator
+        const evaluator = await import(evaluatorPath);
+        const alignment = await evaluator.default(results);
+        const alignmentJson = JSON.stringify(alignment);
+        await shared.set(ns, "alignment", alignmentJson);
+        await output.set("alignment", alignmentJson);

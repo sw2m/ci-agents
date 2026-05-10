@@ -1,0 +1,222 @@
+name: Panel
+description: Orchestrate parallel category teams and aggregate into a ruling.
+
+inputs:
+  namespace:
+    description: Shared module namespace for input/output
+    required: true
+  config:
+    description: Path to panel config YAML file
+    required: true
+  gemini-api-key:
+    description: Gemini API key (required if any category uses gemini)
+    required: false
+  anthropic-api-key:
+    description: Anthropic API key (required if any category uses claude)
+    required: false
+  org:
+    description: GitHub org for membership verification (skip if empty)
+    required: false
+  actor:
+    description: Actor login to verify (defaults to github.actor)
+    required: false
+  round:
+    description: Current review round (1-based). Consumer determines this from whatever data source it uses.
+    required: false
+    default: "1" 
+
+outputs:
+  ruling:
+    description: JSON ruling report
+    value: ${{ steps.rule.outputs.ruling }}
+
+runs:
+  using: composite
+  steps:
+    - uses: sw2m/octoscript/action@main
+
+    - name: Verify org membership
+      if: ${{ inputs.org != '' }}
+      uses: sw2m/octoscript/org@main
+      with:
+        org: ${{ inputs.org }}
+        actor: ${{ inputs.actor || github.actor }}
+
+
+    - id: rule
+      shell: octoscript {0}
+      env:
+        INPUT_NAMESPACE: ${{ inputs.namespace }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
+        ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
+        INPUT_ROUND: ${{ inputs.round }}
+      run: |
+        const { Claude } = await import("../lib/claude.ts");
+        const { Gemini } = await import("../lib/gemini.ts");
+        const { validate } = await import("../lib/validate.ts");
+        const { budget } = await import("../lib/budget.ts");
+
+        const ns = inputs.get("namespace");
+        const configInput = inputs.get("config");
+        const fileConfig = await serde.load(configInput);
+        const overlayRaw = await shared.get(ns, "config");
+        const overlay = overlayRaw ? serde.parse(overlayRaw) : {};
+        const config = serde.composite(fileConfig, overlay);
+        const categories = config.categories || {};
+        const rulingAlgo = config.ruling || "any-fail";
+        const currentRound = parseInt(inputs.get("round") || "1", 10);
+        const currentBudget = budget(currentRound);
+
+        // Run each category's team/agent in parallel
+        async function runCategory(name, cat) {
+          const catNs = ns + "." + name;
+
+          // Composite with any shared override at catNs.config
+          const catOverlayRaw = await shared.get(catNs, "config");
+          if (catOverlayRaw) {
+            const catOverlay = serde.parse(catOverlayRaw);
+            cat = serde.composite(cat, catOverlay);
+          }
+
+          // Build prompt: read input from catNs, render template
+          const inputRaw = await shared.get(catNs, "input");
+          const inputData = inputRaw ? serde.parse(inputRaw) : {};
+          let prompt;
+          if (cat.prompt && /\.(mustache|md|txt)$/.test(cat.prompt)) {
+            const tpl = await Deno.readTextFile(cat.prompt);
+            prompt = Mustache.render(tpl, inputData);
+          } else {
+            prompt = cat.prompt || "";
+          }
+
+          // Load schema
+          let schema = null;
+          if (cat.schema) schema = JSON.parse(await Deno.readTextFile(cat.schema));
+
+          const maxRetries = cat.retries ?? 3;
+          const timeout = cat.timeout ?? 900;
+
+          // Determine agents list
+          const agentConfigs = cat.team
+            ? cat.team.map((a) => typeof a === "string" ? { agent: a } : a)
+            : [typeof cat.agent === "string" ? { agent: cat.agent } : cat.agent || { agent: "gemini" }];
+
+          // Run all agents in parallel
+          async function invoke(cfg) {
+            const opts = { timeout };
+            if (cfg.model) opts.primary = cfg.model;
+            if (cfg.fallback) opts.fallback = cfg.fallback;
+            if (cfg.extra) opts.extra = Array.isArray(cfg.extra) ? cfg.extra : cfg.extra.split(/\s+/).filter(Boolean);
+            const agent = cfg.agent === "claude" ? new Claude(opts) : new Gemini(opts);
+
+            let parsed = null;
+            let lastError = "";
+            for (let attempt = 0; attempt <= maxRetries; attempt++) {
+              const fullPrompt = attempt === 0
+                ? prompt
+                : prompt + "\n\nPrevious attempt failed validation:\n" + lastError + "\n\nPlease fix the output.";
+
+              const r = await agent.run(new Blob([fullPrompt]).stream());
+              const raw = new TextDecoder().decode(r.output);
+
+              if (r.rc !== 0) {
+                lastError = "Agent exited " + r.rc;
+                continue;
+              }
+
+              const fmt = cat.format || undefined;
+              if (fmt || schema) {
+                const parsed_raw = serde.parse(raw, fmt);
+                parsed = typeof parsed_raw === "object" && parsed_raw !== null ? parsed_raw : { raw };
+
+                if (schema) {
+                  const v = validate(parsed, schema);
+                  if (!v.valid) {
+                    lastError = v.errors;
+                    if (attempt < maxRetries) continue;
+                  }
+                }
+              }
+              break;
+            }
+            return { agent: cfg.agent, model: cfg.model || "default", output: parsed };
+          }
+
+          const outputs = await Promise.all(agentConfigs.map(invoke));
+          await shared.set(catNs, "outputs", JSON.stringify(outputs));
+
+          // Run alignment evaluator if team (multiple agents)
+          let alignment = null;
+          if (cat.evaluator && agentConfigs.length > 1) {
+            const evaluator = await import(cat.evaluator);
+            alignment = await evaluator.default(outputs);
+          } else if (agentConfigs.length === 1) {
+            alignment = { pass: outputs[0].output?.verdict !== "fail", single: true };
+          }
+
+          await shared.set(catNs, "alignment", JSON.stringify(alignment));
+          return { name, outputs, alignment };
+        }
+
+        const categoryResults = {};
+        const results = await Promise.all(
+          Object.entries(categories).map(([name, cat]) => runCategory(name, cat))
+        );
+        for (const r of results) {
+          categoryResults[r.name] = { outputs: r.outputs, alignment: r.alignment };
+        }
+
+        // Apply ruling algorithm
+        let pass;
+        if (config.rulingScript) {
+          const rulingMod = await import(config.rulingScript);
+          pass = await rulingMod.default(categoryResults);
+        } else {
+          const total = Object.keys(categoryResults).length;
+          const passing = Object.values(categoryResults).filter(
+            (r) => r.alignment?.pass !== false
+          ).length;
+          const failing = total - passing;
+
+          const aliases = { "any-fail": "-1", "any-pass": "1", "majority": "0.5" };
+          const algo = aliases[rulingAlgo] || rulingAlgo;
+          let n;
+          let isFraction = false;
+          if (algo.includes("/")) {
+            const [num, den] = algo.split("/");
+            n = parseFloat(num) / parseFloat(den);
+            isFraction = true;
+          } else if (algo.endsWith("%")) {
+            n = parseFloat(algo) / 100;
+            isFraction = true;
+          } else {
+            n = parseFloat(algo);
+            isFraction = algo.includes(".");
+          }
+          if (!isNaN(n)) {
+            if (isFraction && n === 1) {
+              pass = failing === 0;
+            } else if (n > 1) {
+              pass = passing >= n;
+            } else if (n >= 0) {
+              pass = isFraction ? passing >= total * n : passing >= n;
+            } else {
+              pass = failing < Math.abs(n);
+            }
+          } else {
+            pass = failing === 0;
+          }
+        }
+
+        const ruling = {
+          pass,
+          round: currentRound,
+          budget: currentBudget,
+          algorithm: config.rulingScript ? "custom" : rulingAlgo,
+          categories: categoryResults,
+        };
+
+        const rulingJson = JSON.stringify(ruling);
+        await shared.set(ns, "ruling", rulingJson);
+        await output.set("ruling", rulingJson);
