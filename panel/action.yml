@@ -46,11 +46,9 @@ runs:
     - id: rule
       shell: octoscript {0}
       env:
-        INPUT_NAMESPACE: ${{ inputs.namespace }}
-        INPUT_CONFIG: ${{ inputs.config }}
-        INPUT_GEMINI_API_KEY: ${{ inputs.gemini-api-key }}
-        INPUT_ANTHROPIC_API_KEY: ${{ inputs.anthropic-api-key }}
-        INPUT_ROUND: ${{ inputs.round }}
+        INPUT_NAMESPACE: ${{ inputs.namespace || env.INPUT_NAMESPACE }}
+        INPUT_CONFIG: ${{ inputs.config || env.INPUT_CONFIG }}
+        INPUT_ROUND: ${{ inputs.round || env.INPUT_ROUND }}
       run: |
         const { Claude } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/claude.ts?t=" + Date.now());
         const { Gemini } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/gemini.ts?t=" + Date.now());
