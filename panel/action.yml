@@ -53,7 +53,7 @@ runs:
         const { Claude } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/claude.ts?t=" + Date.now());
         const { Gemini } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/gemini.ts?t=" + Date.now());
         const { validate } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/validate.ts?t=" + Date.now());
-        const { budget } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/budget.ts?t=" + Date.now());
+        const { cap: budget } = await import("https://raw.githubusercontent.com/sw2m/ci-agents/main/lib/budget.ts?t=" + Date.now());
 
         const ns = inputs.get("namespace");
         // Route API keys
