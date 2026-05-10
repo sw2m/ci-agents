@@ -6,7 +6,8 @@
 //   --skip-trust               (skip workspace-trust prompt)
 //   -m <model>
 
-import { Agent, type AgentOpts } from "./agent.ts";
+const { Agent } = await import("./agent.ts?t=" + Date.now()) as { Agent: typeof import("./agent.ts").Agent };
+type AgentOpts = import("./agent.ts").AgentOpts;
 
 export type Opts = Partial<Pick<AgentOpts, "primary" | "fallback" | "timeout">>;
 
